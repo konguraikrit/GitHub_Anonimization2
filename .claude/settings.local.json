@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(python3 *)",
+      "Bash(python _patch_thai_ner.py)",
+      "Bash(python -c ' *)",
+      "Bash(python -m py_compile anonymize_data_pro_v3.py)",
+      "Bash(python -m py_compile pdf_docx_to_json_ano_v3.py)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(python _fix_patterns.py)",
+      "Bash(python _fix2.py)",
+      "Bash(del _patch_thai_ner.py _fix_patterns.py _fix2.py)"
+    ]
+  }
+}

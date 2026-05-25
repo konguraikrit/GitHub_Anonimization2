@@ -27,15 +27,17 @@ REGEX_PATTERNS = {
     "email": r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
     "thai_id": r'\b\d-\d{4}-\d{5}-\d{2}-\d\b',
     "phone": r'(?<!\d)(?:\+66|0)[689]\d[- ]?\d{3}[- ]?\d{4}(?!\d)',
-    "name": r'(?:นาย|นางสาว|นาง)\s*[\u0E00-\u0E7F]{2,30}[ \t]+[\u0E00-\u0E7F]{2,30}',
-    "company": r'(?:การไฟฟ้าฝ่ายผลิตแห่งประเทศไทย|กฟผ\.|บริษัท\s+[\u0E00-\u0E7F\s]+?\s+จำกัด(?:\s+\(มหาชน\))?)',
+    "name": r'(?:นาย|นางสาว|นาง|เด็กชาย|เด็กหญิง|ดร\.|ศ\.(?:\s*ดร\.)?|รศ\.(?:\s*ดร\.)?|ผศ\.(?:\s*ดร\.)?|นพ\.|พญ\.|ทนาย|คุณ)\s*[\u0E00-\u0E7F]{2,30}(?:[ \t]+[\u0E00-\u0E7F]{2,30}){0,2}',
+    "company": r'(?:การไฟฟ้าฝ่ายผลิตแห่งประเทศไทย|กฟผ\.|บริษัท\s+[\u0E00-\u0E7F\w\s]+?\s+จำกัด(?:\s+\(มหาชน\))?|ห้างหุ้นส่วน(?:\s*จำกัด)?\s+[\u0E00-\u0E7F\w]{2,40}|มูลนิธิ[\u0E00-\u0E7F\w]+(?:\s+[\u0E00-\u0E7F\w]+){0,4}|สมาคม[\u0E00-\u0E7F\w]+(?:\s+[\u0E00-\u0E7F\w]+){0,4})',
     "address": r'เลขที่\s*[0-9A-Za-z/.-]+(?:\s+หมู่\s*\d+)?(?:\s+ถนน[\u0E00-\u0E7F0-9\s]+?)?\s+(?:แขวง|ตำบล)[\u0E00-\u0E7F]+\s+(?:เขต|อำเภอ)[\u0E00-\u0E7F]+\s+(?:จังหวัด)?[\u0E00-\u0E7F]+\s*\d{5}',
     "unit_range": r'\bUnits?\s+\d+(?:-\d+)?\b',
     "doc_code": r"\b[A-Z0-9]+(?:-[A-Z0-9]+){3,}\b",
     "timestamp": r"\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b",
     "hex_encoded": r"_x[0-9a-fA-F]{4}_",
     "author_name": r'"author"\s*:\s*"([^"]+)"',
-    "doc_title": r'"title"\s*:\s*"([^"]+)"'
+    "doc_title": r'"title"\s*:\s*"([^"]+)"',
+    "line_id": r'(?:Line\s*[Ii][Dd]|LINE\s*ID|\u0e44\u0e25\u0e19\u0e4c)[\s::\uff1a]*([@\w._-]{3,30})',
+    "passport": r'(?:Passport\s*(?:No\.?|Number)?|\u0e2b\u0e19\u0e31\u0e07\u0e2a\u0e37\u0e2d\u0e40\u0e14\u0e34\u0e19\u0e17\u0e32\u0e07(?:\s*\u0e40\u0e25\u0e02\u0e17\u0e35\u0e48)?)[\s:.]*([A-Z]{2}\d{7})\b',
 }
 
 def normalize_text(text):
@@ -176,6 +178,11 @@ def get_fake_value(category, original_text):
         "address": lambda: fake_th.address() if thai_original else fake.address(),
         "doc_title": lambda: f"[Title {fake.catch_phrase()}]",
         "hex_encoded": lambda: f"[Encoded {fake.hexify(text='^^^^')}]",
+        "passport": lambda: fake.bothify(text="??#######").upper(),
+        "line_id": lambda: f"@{fake.user_name()}",
+        "money": lambda: f"{fake.numerify(text='##,###')} บาท",
+        "percent": lambda: f"{fake.random_int(min=1, max=100)}%",
+        "url": lambda: fake.url(),
     }
     
     gen = mapping.get(category, lambda: f"[{category.upper()} {fake.random_number(digits=4)}]")
@@ -184,6 +191,106 @@ def get_fake_value(category, original_text):
     return val
 
 # =============================================================================
+
+# -----------------------------------------------------------------------------
+# THAI NER — optional detection via PyThaiNLP (pip install pythainlp)
+# Enable by setting environment variable: THAI_NER=1
+# -----------------------------------------------------------------------------
+
+NER_CATEGORY_MAP = {
+    "PERSON": "name",
+    "ORGANIZATION": "company",
+    "LOCATION": "location",
+    "DATE": "date",
+    "TIME": "timestamp",
+    "MONEY": "money",
+    "PERCENT": "percent",
+    "EMAIL": "email",
+    "PHONE": "phone",
+    "URL": "url",
+}
+
+_NER_TAGGER = None
+
+
+def _get_ner_tagger():
+    global _NER_TAGGER
+    if _NER_TAGGER is None:
+        from pythainlp.ner import NER
+        _NER_TAGGER = NER("thainer-corpus-v2-base-crf")
+    return _NER_TAGGER
+
+
+def _flush_ner_entity(entity_text, ner_type, source_text, found_items):
+    entity_text = entity_text.strip()
+    if len(entity_text) < 2 or entity_text not in source_text:
+        return
+    cat = NER_CATEGORY_MAP.get(ner_type, ner_type.lower())
+    if not any(item["pattern"] == entity_text for item in found_items):
+        found_items.append({
+            "pattern": entity_text,
+            "category": cat,
+            "sensitive": True,
+            "type": "NER",
+            "count": source_text.count(entity_text)
+        })
+
+
+def scan_with_thai_ner(text):
+    """Run PyThaiNLP NER on a single Thai text string. Returns [] if unavailable."""
+    try:
+        tagger = _get_ner_tagger()
+    except Exception:
+        return []
+    found_items = []
+    try:
+        tagged = tagger.get_ner(text, pos=False)
+        current_tokens, current_type = [], None
+        for word, tag in tagged:
+            if tag.startswith("B-"):
+                if current_tokens and current_type:
+                    _flush_ner_entity("".join(current_tokens), current_type, text, found_items)
+                current_tokens, current_type = [word], tag[2:]
+            elif tag.startswith("I-") and current_type == tag[2:]:
+                current_tokens.append(word)
+            else:
+                if current_tokens and current_type:
+                    _flush_ner_entity("".join(current_tokens), current_type, text, found_items)
+                current_tokens, current_type = [], None
+        if current_tokens and current_type:
+            _flush_ner_entity("".join(current_tokens), current_type, text, found_items)
+    except Exception:
+        pass
+    return found_items
+
+
+def collect_ner_items(data):
+    """Walk a data structure or plain text string, running NER on Thai string leaves.
+    Requires THAI_NER=1 env var and: pip install pythainlp"""
+    if not os.environ.get("THAI_NER", ""):
+        return []
+    all_items = []
+    seen = set()
+
+    def _walk(node):
+        if isinstance(node, str):
+            if not contains_thai(node):
+                return
+            for item in scan_with_thai_ner(node):
+                p = item["pattern"]
+                if p not in seen:
+                    seen.add(p)
+                    all_items.append(item)
+        elif isinstance(node, dict):
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, list):
+            for elem in node:
+                _walk(elem)
+
+    _walk(data)
+    return all_items
+
 # 2. EXTRACTION LOGIC (From pdf_docx_to_json_ano_v2.py)
 # =============================================================================
 
@@ -402,6 +509,12 @@ def main():
     
     print(f"[SCAN] Scanning {input_file}...")
     found_items = scan_text(text_for_scanning, accumulated_list)
+
+    # NER scan on structured data (set THAI_NER=1 to enable)
+    ner_items = collect_ner_items(extracted_dict)
+    for item in ner_items:
+        if not any(existing['pattern'] == item['pattern'] for existing in found_items):
+            found_items.append(item)
 
     if not found_items:
         print("[OK] No sensitive data detected. Saving raw JSON.")
