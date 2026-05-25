@@ -3,9 +3,6 @@ import re
 import os
 import sys
 import unicodedata
-from pypdf import PdfReader
-import pdfplumber
-import docx
 from faker import Faker
 
 # Initialize Faker
@@ -14,6 +11,7 @@ fake_th = Faker("th_TH")
 
 # Path to the accumulated sensitive data list
 ACCUMULATED_LIST_PATH = "sensitive_data_list.json"
+EXCEL_EXTENSIONS = {".xlsx", ".xlsm"}
 
 # =============================================================================
 # 1. ANONYMIZATION CONFIGURATION (Synced with anonymize_data_pro_test.py)
@@ -72,6 +70,81 @@ def save_accumulated_list(data_list):
     except Exception as e:
         print(f"Error saving accumulated list: {e}")
 
+def _excel_cell_to_json(value, pd):
+    """Convert pandas/openpyxl cell values into JSON-friendly primitives."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+
+    if hasattr(value, "isoformat") and not isinstance(value, str):
+        try:
+            return str(value)
+        except (TypeError, ValueError):
+            pass
+
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except (TypeError, ValueError):
+            pass
+
+    return value
+
+def convert_excel_to_genai(excel_path):
+    """Convert an Excel workbook to a JSON-like dict for scanning/anonymization."""
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise RuntimeError(
+            "Excel support requires pandas and openpyxl. "
+            "Install with: pip install pandas openpyxl"
+        ) from exc
+
+    try:
+        sheets_dict = pd.read_excel(
+            excel_path,
+            sheet_name=None,
+            engine="openpyxl",
+            header=None
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            "Excel support requires openpyxl for .xlsx/.xlsm files. "
+            "Install with: pip install openpyxl"
+        ) from exc
+
+    combined_data = {
+        "metadata": {
+            "source_type": "EXCEL",
+            "sheet_count": len(sheets_dict),
+            "sheets": list(sheets_dict.keys())
+        },
+        "sheets": {}
+    }
+
+    for sheet_name, df in sheets_dict.items():
+        # Match the reference converter: every row is data, no header inference.
+        df = df.dropna(how="all").reset_index(drop=True)
+
+        if df.shape[1] == 1:
+            sheet_data = [
+                _excel_cell_to_json(value, pd)
+                for value in df.iloc[:, 0].tolist()
+            ]
+        else:
+            sheet_data = [
+                [_excel_cell_to_json(value, pd) for value in row]
+                for row in df.values.tolist()
+            ]
+
+        combined_data["sheets"][str(sheet_name)] = sheet_data
+
+    return combined_data
+
 REPLACEMENT_CACHE = {}
 
 def get_fake_value(category, original_text):
@@ -121,6 +194,15 @@ def get_safe_prop(prop, attr):
         return None
 
 def convert_pdf_to_genai(pdf_path):
+    try:
+        from pypdf import PdfReader
+        import pdfplumber
+    except ImportError as exc:
+        raise RuntimeError(
+            "PDF extraction requires pypdf and pdfplumber. "
+            "Install with: pip install pypdf pdfplumber"
+        ) from exc
+
     print(f"--- Extracting PDF: {pdf_path} ---")
     reader = PdfReader(pdf_path)
     meta = reader.metadata
@@ -145,6 +227,11 @@ def convert_pdf_to_genai(pdf_path):
     return combined_data
 
 def convert_docx_to_genai(docx_path):
+    try:
+        import docx
+    except ImportError as exc:
+        raise RuntimeError("DOCX extraction requires python-docx. Install with: pip install python-docx") from exc
+
     print(f"--- Extracting DOCX: {docx_path} ---")
     doc = docx.Document(docx_path)
     prop = doc.core_properties
@@ -290,7 +377,7 @@ def process_json_recursively(data, approved_items):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python pdf_docx_to_json_ano_v3.py <input_file.pdf or .docx>")
+        print("Usage: python pdf_docx_to_json_ano_v3.py <input_file.pdf, .docx, .xlsx, or .xlsm>")
         return
 
     input_file = sys.argv[1]
@@ -303,19 +390,21 @@ def main():
         extracted_dict = convert_pdf_to_genai(input_file)
     elif ext == ".docx":
         extracted_dict = convert_docx_to_genai(input_file)
+    elif ext in EXCEL_EXTENSIONS:
+        extracted_dict = convert_excel_to_genai(input_file)
     else:
         print(f"Unsupported file type: {ext}"); return
 
     # Step 2: Load and Scan
     accumulated_list = load_accumulated_list()
     # We scan the JSON-serialized version of the extracted content
-    text_for_scanning = json.dumps(extracted_dict, ensure_ascii=False)
+    text_for_scanning = json.dumps(extracted_dict, ensure_ascii=False, default=str)
     
-    print(f"🔍 Scanning {input_file}...")
+    print(f"[SCAN] Scanning {input_file}...")
     found_items = scan_text(text_for_scanning, accumulated_list)
 
     if not found_items:
-        print("✅ No sensitive data detected. Saving raw JSON.")
+        print("[OK] No sensitive data detected. Saving raw JSON.")
         approved_items = prompt_for_manual_names(text_for_scanning)
         if approved_items:
             save_accumulated_list(accumulated_list + [
@@ -326,7 +415,7 @@ def main():
                 }
                 for item in approved_items
             ])
-            print("🛡️  Anonymizing...")
+            print("[ANONYMIZE] Anonymizing...")
             final_data, log = process_json_recursively(extracted_dict, approved_items)
         else:
             final_data = extracted_dict
@@ -358,7 +447,7 @@ def main():
                     if 0 <= idx < len(found_items):
                         approved_items.append(found_items[idx])
             except ValueError:
-                print("❌ Invalid input. Exiting."); return
+                print("[ERROR] Invalid input. Exiting."); return
 
         if not cancelled:
             approved_items.extend(prompt_for_manual_names(text_for_scanning))
@@ -375,11 +464,11 @@ def main():
                     })
             
             if newly_approved_literals:
-                print(f"💾 Updating accumulated list with {len(newly_approved_literals)} new items...")
+                print(f"[SAVE] Updating accumulated list with {len(newly_approved_literals)} new items...")
                 save_accumulated_list(accumulated_list + newly_approved_literals)
 
             # Step 5: Execute Anonymization
-            print("🛡️  Anonymizing...")
+            print("[ANONYMIZE] Anonymizing...")
             final_data, log = process_json_recursively(extracted_dict, approved_items)
         elif not cancelled:
             final_data = extracted_dict
@@ -396,9 +485,9 @@ def main():
             f.write(f"\n--- SESSION: {input_file} ---\n")
             for entry in log:
                 f.write(f"[{entry['category']}] {entry['original']} -> {entry['replacement']}\n")
-        print(f"📄 Log updated: {log_file}")
+        print(f"[LOG] Log updated: {log_file}")
 
-    print(f"✅ Success! Final JSON saved to: {output_path}")
+    print(f"[OK] Success! Final JSON saved to: {output_path}")
 
 if __name__ == "__main__":
     main()

@@ -1,76 +1,112 @@
-# 🛡️ Advanced Privacy Anonymizer Pro
+# Advanced Privacy Anonymizer Pro v3
 
-A professional-grade tool for detecting and anonymizing sensitive information across multiple file formats. This tool combines persistent "accumulated" knowledge with dynamic PII (Personally Identifiable Information) detection.
+Tools for extracting text/table data, reviewing detected sensitive values, and writing anonymized outputs. The v3 scripts now support Excel workbooks by converting `.xlsx` / `.xlsm` files into JSON-like data before using the existing anonymization workflow.
 
-## 🚀 Key Features
+## Supported Files
 
-*   **Multi-Format Support:** Process `.json`, `.pdf`, `.docx`, and `.txt` files.
-*   **Persistent Memory:** Maintains a `sensitive_data_list.json` that "remembers" approved sensitive keywords across sessions.
-*   **Dynamic Detection:** Uses Regex to automatically identify SSNs, Credit Cards, Emails, Coordinates, and Project Codes.
-*   **Human-in-the-Loop:** A clear review step allows you to approve or reject specific detections before any changes are applied.
-*   **Consistent Anonymization:** Uses `Faker` with a session cache to ensure that the same sensitive value (e.g., "EGAT") always receives the same fake replacement within a single file.
-*   **Detailed Logging:** Tracks every replacement made in `anonymization_pro_log.txt`.
+`anonymize_data_pro_v3.py`
 
----
+- `.json`: recursively anonymizes JSON values and saves `_pro_anonymized.json`
+- `.pdf`: extracts text and saves `_pro_anonymized.txt`
+- `.docx`: anonymizes paragraph text and saves `_pro_anonymized.docx`
+- `.txt` and other text files: saves `_pro_anonymized<extension>`
+- `.xlsx` / `.xlsm`: converts workbook sheets to JSON and saves `_pro_anonymized.json`
 
-## 🛠️ Installation
+`pdf_docx_to_json_ano_v3.py`
 
-Ensure you have the required libraries installed:
+- `.pdf`: extracts pages and tables to JSON, then anonymizes
+- `.docx`: extracts paragraphs/tables to JSON, then anonymizes
+- `.xlsx` / `.xlsm`: converts workbook sheets to JSON, then anonymizes
+- Output: `<input_name>_anonymized.json`
 
-```bash
-pip install faker PyPDF2 python-docx
-```
+## Installation
 
----
-
-## 📖 Step-by-Step Usage
-
-### Step 1: Prepare your data
-Place the file you want to anonymize in the project directory.
-
-### Step 2: Run the script
-Execute the script via terminal, providing the path to your file:
+Install the Python packages used by the scripts:
 
 ```bash
-python anonymize_data_pro.py path/to/your/file.json
+pip install faker PyPDF2 pypdf pdfplumber python-docx pandas openpyxl
 ```
 
-### Step 3: Review Detections
-The script will scan the file and display a table of results:
-*   **Accumulated:** Items already known from your `sensitive_data_list.json`.
-*   **New (Regex):** Freshly detected patterns like emails or credit card numbers.
+`pandas` and `openpyxl` are required only for Excel input.
 
-### Step 4: Approve Replacements
-You will be prompted to select which items to anonymize:
-*   Type `y` to approve **all** detected items.
-*   Type `n` to cancel the operation.
-*   Type specific IDs (e.g., `1,3,5`) to approve only those items.
+## Excel Conversion Behavior
 
-### Step 5: Check Outputs
-*   **Anonymized File:** A new file will be created with the suffix `_pro_anonymized` (e.g., `data_pro_anonymized.json`).
-*   **Updated List:** Any **newly approved** items are automatically added to `sensitive_data_list.json` for future sessions.
-*   **Session Log:** Review `anonymization_pro_log.txt` to see exactly what was replaced and with what value.
+Excel input follows the same practical rules as `convertexceltojson3_worked_string-convert_books_for_Gen_AI.py`:
 
----
+- All workbook sheets are loaded.
+- Rows are treated as data (`header=None`), so no row is promoted to column headers.
+- Completely empty rows are dropped.
+- Empty cells become `null` in JSON.
+- A one-column sheet becomes a simple list.
+- A multi-column sheet becomes a list of row lists.
+- Dates and other non-JSON scalar values are converted to JSON-friendly values before saving.
 
-## 📂 Project Structure
+The workbook JSON structure is:
 
-*   **`anonymize_data_pro.py`**: The core execution engine.
-*   **`sensitive_data_list.json`**: Your persistent database of sensitive keywords. You can manually edit this file to add or remove patterns.
-*   **`anonymization_pro_log.txt`**: A historical record of all anonymization actions.
+```json
+{
+  "metadata": {
+    "source_type": "EXCEL",
+    "sheet_count": 2,
+    "sheets": ["Sheet1", "Sheet2"]
+  },
+  "sheets": {
+    "Sheet1": [["Name", "Email"], ["Alice", "alice@example.com"]],
+    "Sheet2": ["single column value"]
+  }
+}
+```
 
----
+## Usage
 
-## 💡 Pro Tips
+Run direct anonymization:
 
-*   **Manual List Updates:** You can manually add entries to `sensitive_data_list.json` using this format:
-    ```json
-    {
-        "pattern": "Secret Project X",
-        "category": "project",
-        "sensitive": false
-    }
-    ```
-    *(Set `"sensitive": true` for case-sensitive matching).*
-*   **PDF Output:** When processing a `.pdf`, the tool extracts the text and saves the anonymized result as a `.txt` file to preserve data integrity.
-*   **Recursive JSON:** For `.json` files, the tool recursively scans all values while keeping your keys (structure) intact.
+```bash
+python anonymize_data_pro_v3.py path/to/input.xlsx
+python anonymize_data_pro_v3.py path/to/input.json
+python anonymize_data_pro_v3.py path/to/input.docx
+```
+
+Run extraction-to-JSON anonymization:
+
+```bash
+python pdf_docx_to_json_ano_v3.py path/to/input.pdf
+python pdf_docx_to_json_ano_v3.py path/to/input.docx
+python pdf_docx_to_json_ano_v3.py path/to/input.xlsx
+```
+
+## Review Workflow
+
+After scanning, the scripts show detected sensitive data:
+
+- `Accumulated`: values already known from `sensitive_data_list.json`
+- `New (Regex)`: values detected by built-in regex patterns
+- `Manual`: exact names you add during the prompt
+
+At the approval prompt:
+
+- Type `y` to approve all detections.
+- Type `n` or press Enter to cancel anonymization.
+- Type IDs such as `1,3,5` to approve only selected detections.
+
+Approved new detections are appended to `sensitive_data_list.json` so future sessions can detect them as accumulated values.
+
+## Outputs and Logs
+
+- `anonymize_data_pro_v3.py` writes replacement details to `anonymization_pro_log.txt`.
+- `pdf_docx_to_json_ano_v3.py` writes replacement details to `extraction_anonymization_log.txt`.
+- Both scripts preserve the nested JSON/list structure and anonymize string values recursively.
+
+## Manual Sensitive List Entries
+
+You can manually add entries to `sensitive_data_list.json`:
+
+```json
+{
+  "pattern": "Secret Project X",
+  "category": "project",
+  "sensitive": false
+}
+```
+
+Set `"sensitive": true` for case-sensitive matching.
