@@ -543,7 +543,26 @@ def main():
         for i, item in enumerate(found_items):
             print(f"{i+1:<4} {item['type']:<15} {item['category']:<15} {item['count']:<6} {item['pattern']}")
 
-        print("\n[Options] 'y': Approve All, 'n': Cancel, or comma-separated IDs (e.g., 1,3,5)")
+        def _parse_ids(token_str, total):
+            """Parse '1,3,5-10,12' into a set of 0-based indices."""
+            indices = set()
+            for token in token_str.split(','):
+                token = token.strip()
+                if '-' in token:
+                    a, b = token.split('-', 1)
+                    indices.update(range(int(a) - 1, int(b)))
+                else:
+                    indices.add(int(token) - 1)
+            return {i for i in indices if 0 <= i < total}
+
+        categories = sorted({item['category'] for item in found_items})
+        print("\n[Options]")
+        print("  y                Approve all")
+        print("  n                Cancel")
+        print("  1,3,5-10         Approve specific IDs / ranges")
+        print("  !2,4,6-8         Approve ALL except these IDs / ranges")
+        print(f"  c:name           Approve all of a category  (available: {', '.join(categories)})")
+        print("  c:name,company   Approve multiple categories")
         choice = input("Your selection: ").lower().strip()
 
         approved_items = []
@@ -555,12 +574,21 @@ def main():
             final_data = extracted_dict
             log = []
             cancelled = True
+        elif choice.startswith('c:'):
+            selected_cats = {c.strip() for c in choice[2:].split(',')}
+            approved_items = [item for item in found_items if item['category'] in selected_cats]
+            if not approved_items:
+                print(f"[ERROR] No items matched categories: {selected_cats}. Exiting."); return
+        elif choice.startswith('!'):
+            try:
+                exclude_ids = _parse_ids(choice[1:], len(found_items))
+                approved_items = [item for i, item in enumerate(found_items) if i not in exclude_ids]
+            except ValueError:
+                print("[ERROR] Invalid input. Exiting."); return
         else:
             try:
-                indices = [int(x.strip()) - 1 for x in choice.split(',')]
-                for idx in indices:
-                    if 0 <= idx < len(found_items):
-                        approved_items.append(found_items[idx])
+                indices = _parse_ids(choice, len(found_items))
+                approved_items = [found_items[i] for i in sorted(indices)]
             except ValueError:
                 print("[ERROR] Invalid input. Exiting."); return
 
