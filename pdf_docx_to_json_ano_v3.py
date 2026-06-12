@@ -216,8 +216,8 @@ _NER_TAGGER = None
 def _get_ner_tagger():
     global _NER_TAGGER
     if _NER_TAGGER is None:
-        from pythainlp.ner import NER
-        _NER_TAGGER = NER("thainer-corpus-v2-base-crf")
+        from pythainlp.tag import NER
+        _NER_TAGGER = NER("thainer")
     return _NER_TAGGER
 
 
@@ -244,7 +244,7 @@ def scan_with_thai_ner(text):
         return []
     found_items = []
     try:
-        tagged = tagger.get_ner(text, pos=False)
+        tagged = tagger.tag(text)
         current_tokens, current_type = [], None
         for word, tag in tagged:
             if tag.startswith("B-"):
@@ -507,6 +507,8 @@ def main():
     # We scan the JSON-serialized version of the extracted content
     text_for_scanning = json.dumps(extracted_dict, ensure_ascii=False, default=str)
     
+    ner_active = bool(os.environ.get("THAI_NER", ""))
+    print(f"[NER] Thai NER: {'ENABLED (THAI_NER=1)' if ner_active else 'disabled  (set THAI_NER=1 to enable)'}")
     print(f"[SCAN] Scanning {input_file}...")
     found_items = scan_text(text_for_scanning, accumulated_list)
 

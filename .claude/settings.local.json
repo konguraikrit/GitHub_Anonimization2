@@ -10,7 +10,14 @@
       "Bash(echo \"Exit: $?\")",
       "Bash(python _fix_patterns.py)",
       "Bash(python _fix2.py)",
-      "Bash(del _patch_thai_ner.py _fix_patterns.py _fix2.py)"
+      "Bash(del _patch_thai_ner.py _fix_patterns.py _fix2.py)",
+      "PowerShell(pip show *)",
+      "PowerShell(pip install *)",
+      "PowerShell(python -c \"import pythainlp; import os; p = os.path.dirname\\(pythainlp.__file__\\); print\\(os.listdir\\(p\\)\\)\")",
+      "PowerShell(python -c \"from pythainlp import tag; print\\(dir\\(tag\\)\\)\")",
+      "PowerShell(python \"C:\\\\Users\\\\EGAT\\\\Documents\\\\GitHub_Anonimization2\\\\test_ner.py\" 2>&1)",
+      "PowerShell(python -c \"from pythainlp.tag import named_entity; import inspect; print\\(inspect.getsource\\(named_entity\\)\\)\" 2>&1 | Select-Object -First 100)",
+      "PowerShell(python -c \"from pythainlp.tag import NER; t = NER\\('thainer'\\); print\\([m for m in dir\\(t\\) if not m.startswith\\('_'\\)]\\)\" 2>&1)"
     ]
   }
 }
